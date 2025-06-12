@@ -1,5 +1,6 @@
 import os
-from flask import Flask, render_template, request, jsonify
+import streamlit as st
+st.set_page_config(layout="wide")
 import torch
 from torchvision import transforms
 from PIL import Image
@@ -13,7 +14,6 @@ import torch.nn.functional as F
 from cnn_model import PaddyTransferLearningModel # Assuming you're using this one
 # from cnn_model import PaddyCNNModel # Uncomment if you're using the CNN from scratch
 
-app = Flask(__name__)
 
 # --- Configuration ---
 # Path to your saved model weights
@@ -84,59 +84,56 @@ inference_transform = transforms.Compose([
 
 # --- Routes ---
 
-@app.route('/')
-def index():
-    """Renders the main HTML page for image upload."""
-    return render_template('index.html')
+# No index route needed with Streamlit
 
-@app.route('/predict', methods=['POST'])
-def predict():
-    """Handles image upload, runs prediction, and returns result."""
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part'}), 400
-    
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
-    
-    if file:
-        try:
-            img_bytes = file.read()
-            img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+# Streamlit app
+st.title("Paddy Disease Prediction")
 
-            input_tensor = inference_transform(img)
-            input_batch = input_tensor.unsqueeze(0).to(DEVICE)
+uploaded_file = st.file_uploader("Upload a paddy leaf image", type=["png", "jpg", "jpeg"])
 
-            with torch.no_grad():
-                output = model(input_batch)
-                probabilities = F.softmax(output, dim=1)
-                _, predicted_class_idx = torch.max(output, 1)
+if uploaded_file is not None:
+    try:
+        img_bytes = uploaded_file.read()
+        img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
 
-            prediction_label = class_labels.get(predicted_class_idx.item(), "Unknown")
-            confidence = probabilities[0, predicted_class_idx.item()].item() * 100
+        input_tensor = inference_transform(img)
+        input_batch = input_tensor.unsqueeze(0).to(DEVICE)
 
-            # --- Get the prescription ---
-            # This will now correctly map to 'Bacterial leaf blight', 'Brown spot', 'Leaf smut'
-            # If 'Healthy' is also a class and predicted, it will also map correctly.
-            prescription = DISEASE_PRESCRIPTIONS.get(prediction_label, "No specific recommendation available for this. Please consult an agricultural expert.")
+        with torch.no_grad():
+            output = model(input_batch)
+            probabilities = F.softmax(output, dim=1)
+            _, predicted_class_idx = torch.max(output, 1)
 
-            img_io = io.BytesIO()
-            img.save(img_io, format='PNG')
-            img_base64 = base64.b64encode(img_io.getvalue()).decode('utf-8')
+        prediction_label = class_labels.get(predicted_class_idx.item(), "Unknown")
+        confidence = probabilities[0, predicted_class_idx.item()].item() * 100
 
-            return jsonify({
-                'prediction': prediction_label,
-                'confidence': f"{confidence:.2f}%",
-                'prescription': prescription,
-                'image': f"data:image/png;base64,{img_base64}"
-            })
+        # --- Get the prescription ---
+        # This will now correctly map to 'Bacterial leaf blight', 'Brown spot', 'Leaf smut'
+        # If 'Healthy' is also a class and predicted, it will also map correctly.
+        prescription = DISEASE_PRESCRIPTIONS.get(prediction_label, "No specific recommendation available for this. Please consult an agricultural expert.")
 
-        except Exception as e:
-            print(f"Prediction error: {e}")
-            return jsonify({'error': f'Prediction failed: {str(e)}'}), 500
+        st.markdown(
+            """
+            <style>
+            img {
+                width: 100%;
+                height: auto;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.image(img, caption="Uploaded Image", use_container_width=True)
+        st.write(f"Prediction: {prediction_label}")
+        st.write(f"Confidence: {confidence:.2f}%")
+        st.write("Prescription:")
+        st.write(prescription)
+
+    except Exception as e:
+        st.error(f"Prediction failed: {str(e)}")
 
 if __name__ == '__main__':
-    print("Starting Flask application...")
-    # Set debug=True for development to auto-reload on code changes.
-    # Set to False for production environments.
-    app.run(debug=True, port=5000)
+    print("Starting Streamlit application...")
+    # No need to run app.run() with Streamlit
+    # Streamlit apps are run from the command line: streamlit run app.py
+    pass
