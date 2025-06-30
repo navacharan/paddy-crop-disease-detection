@@ -8,6 +8,10 @@ import io
 import base64
 import json
 import torch.nn.functional as F
+import numpy as np
+from sklearn import svm
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
 
 # Import your CNN model class.
 # Ensure this matches the model you trained and saved weights for.
@@ -54,26 +58,68 @@ DISEASE_PRESCRIPTIONS = {
     'Leaf smut': "For Leaf Smut: Implement fungicide seed treatment (e.g., Carbendazim or Thiram) before planting. Avoid excessive nitrogen application, especially during panicle initiation. Remove smutted panicles promptly before harvesting to prevent spore dissemination. Practice good field sanitation."
 }
 
+def train_svm(features, labeals):
+    """
+    Trains an SVM model.
 
-# --- Load the trained model ---
-model = None
+    Args:
+        features (numpy.ndarray): Feature vectors.
+        labels (numpy.ndarray): Corresponding labels.
+
+    Returns:
+        sklearn.svm.SVC: Trained SVM model.
+    """
+    # Split data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, random_state=42)
+
+    # Create an SVM classifier
+    clf = svm.SVC(kernel='linear', C=1)
+
+    # Train the classifier
+    clf.fit(X_train, y_train)
+
+    # Make predictions on the test set
+    y_pred = clf.predict(X_test)
+
+    # Calculate accuracy
+    accuracy = accuracy_score(y_test, y_pred)
+    print(f"Accuracy: {accuracy}")
+
+    return clf
+
+# --- Load the trained models ---
+cnn_model = None
+#svm_model = None
 try:
-    # Instantiate your model.
+    # Instantiate your CNN model.
     # num_classes should match the number of classes in your dataset (len of class_labels).
-    # 'resnet18' is used here as an example; change if you used a different backbone.
-    model = PaddyTransferLearningModel(num_classes=len(class_labels), model_name='resnet18', pretrained=False)
+    cnn_model = PaddyTransferLearningModel(num_classes=len(class_labels), model_name='resnet18', pretrained=False)
 
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
-    model.eval() # Set the model to evaluation mode
-    model.to(DEVICE) # Move model to the appropriate device
-    print(f"Model loaded successfully from {MODEL_PATH} on {DEVICE}")
+    cnn_model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+    cnn_model.eval() # Set the model to evaluation mode
+    cnn_model.to(DEVICE) # Move model to the appropriate device
+    print(f"CNN Model loaded successfully from {MODEL_PATH} on {DEVICE}")
 except FileNotFoundError:
     print(f"Error: Model weights file not found at {MODEL_PATH}.")
     print("Please ensure you have trained the model and saved its weights (e.g., by running main.py).")
     exit() # Exit if model not found
 except Exception as e:
-    print(f"Error loading model: {e}")
+    print(f"Error loading CNN model: {e}")
     exit()
+
+## --- Load SVM Model ---
+#try:
+#    # Generate some dummy data for demonstration (replace with your actual data loading)
+#    X = np.random.rand(100, 128 * 128 * 3)  # 100 samples, 128x128x3 features
+#    y = np.random.randint(0, len(class_labels), 100)  # 100 labels
+#
+#    svm_model = train_svm(X, y)
+#    print("SVM model loaded successfully.")
+#except Exception as e:
+#    print(f"Error loading SVM model: {e}")
+#    # Handle the error appropriately, e.g., by exiting or using a default model
+#    exit()
+#
 
 # --- Define transformations for inference (MUST match data_loader.py's val_test_transform) ---
 inference_transform = transforms.Compose([
@@ -89,23 +135,40 @@ inference_transform = transforms.Compose([
 # Streamlit app
 st.title("Paddy Disease Prediction")
 
+#model_type = st.radio("Choose Model", ("CNN", "SVM"))
+
 uploaded_file = st.file_uploader("Upload a paddy leaf image", type=["png", "jpg", "jpeg"])
 
 if uploaded_file is not None:
     try:
         img_bytes = uploaded_file.read()
         img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+        #img_array = np.array(img)
+        #img_resized = np.resize(img_array, (128, 128, 3))
+        #img_flattened = img_resized.flatten()
 
+        #if model_type == "CNN":
         input_tensor = inference_transform(img)
         input_batch = input_tensor.unsqueeze(0).to(DEVICE)
 
         with torch.no_grad():
-            output = model(input_batch)
-            probabilities = F.softmax(output, dim=1)
-            _, predicted_class_idx = torch.max(output, 1)
+            cnn_output = cnn_model(input_batch)
+            probabilities = F.softmax(cnn_output, dim=1)
+            _, predicted_class_idx = torch.max(cnn_output, 1)
 
         prediction_label = class_labels.get(predicted_class_idx.item(), "Unknown")
         confidence = probabilities[0, predicted_class_idx.item()].item() * 100
+
+        #elif model_type == "SVM":
+        #    # Reshape the image data for SVM prediction
+        #    img_reshaped = img_flattened.reshape(1, -1)
+        #    prediction = svm_model.predict(img_reshaped)
+        #    predicted_class_idx = prediction[0]
+        #    prediction_label = class_labels.get(predicted_class_idx, "Unknown")
+        #    confidence = 100  # SVM doesn't directly provide confidence
+        #else:
+        #    st.error("Invalid model type selected.")
+        #    exit()
 
         # --- Get the prescription ---
         # This will now correctly map to 'Bacterial leaf blight', 'Brown spot', 'Leaf smut'
